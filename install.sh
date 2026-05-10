@@ -315,6 +315,25 @@ if ask_yn 'Do you need to link your account now? (Y/N)'; then
   prompt_continue 'Press Enter when you have linked your account...'
 fi
 
+ok 'Account linked.'
+
+# ── Join the Microsoft GitHub organization ────────────────────────
+echo ''
+echo -e "  ${C_WHITE}Now you need to join the Microsoft GitHub organization.${C_RESET}"
+echo ''
+echo -e "  ${C_GRAY}  1. Go to ${C_CYAN}https://repos.opensource.microsoft.com/orgs/microsoft${C_RESET}"
+echo -e "  ${C_GRAY}  2. Sign in with your ${C_WHITE}personal GitHub${C_GRAY} account${C_RESET}"
+echo -e "  ${C_GRAY}  3. Click ${C_WHITE}\"Join\"${C_GRAY} to request membership in the Microsoft org${C_RESET}"
+echo ''
+
+if ask_yn 'Do you need to join the Microsoft org now? (Y/N)'; then
+  open_url 'https://repos.opensource.microsoft.com/orgs/microsoft'
+  echo ''
+  echo -e "  ${C_GRAY}Complete the join in your browser, then come back here.${C_RESET}"
+  echo ''
+  prompt_continue 'Press Enter when you have joined the Microsoft org...'
+fi
+
 ok 'Account setup complete.'
 
 # ══════════════════════════════════════════════════════════════════════

@@ -37,19 +37,19 @@ function Install-DevSetup {
 
   # ── Repo catalog ────────────────────────────────────────────────
   $Catalog = [ordered]@{
-    1 = @{
+    '1' = @{
       Key         = 'MCAPS-IQ'
       Owner       = 'microsoft'
       Name        = 'MCAPS-IQ'
       Description = 'MCAPS Intelligence — AI-powered field intelligence'
     }
-    2 = @{
+    '2' = @{
       Key         = 'KATE'
       Owner       = 'microsoft'
       Name        = 'KATE'
       Description = 'KATE — Knowledge-Augmented Technical Engagement'
     }
-    3 = @{
+    '3' = @{
       Key         = 'LCG'
       Owner       = 'microsoft'
       Name        = 'LCG'
@@ -85,14 +85,15 @@ function Install-DevSetup {
   function Write-Info($msg) { Write-Host "  → $msg" -ForegroundColor Blue }
 
   function Write-Instruction {
-    param([string[]]$Lines)
+    param([string[]]$Lines, [int]$Width = 56)
+    $bar = '─' * ($Width + 4)
     Write-Host ''
-    Write-Host '  ┌──────────────────────────────────────────────────────────┐' -ForegroundColor Yellow
+    Write-Host "  ┌${bar}┐" -ForegroundColor Yellow
     foreach ($line in $Lines) {
-      $padded = $line.PadRight(56)
+      $padded = $line.PadRight($Width)
       Write-Host "  │  $padded  │" -ForegroundColor Yellow
     }
-    Write-Host '  └──────────────────────────────────────────────────────────┘' -ForegroundColor Yellow
+    Write-Host "  └${bar}┘" -ForegroundColor Yellow
     Write-Host ''
   }
 
@@ -297,6 +298,36 @@ function Install-DevSetup {
     Prompt-Continue 'Press Enter when you have linked your account...'
   }
 
+  Write-Ok 'Account linked.'
+
+  # ── Join the Microsoft GitHub organization ──────────────────────
+  Write-Host ''
+  Write-Host '  Now you need to join the Microsoft GitHub organization.' -ForegroundColor White
+  Write-Host ''
+  Write-Host '    1. Go to ' -ForegroundColor DarkGray -NoNewline
+  Write-Host 'https://repos.opensource.microsoft.com/orgs/microsoft' -ForegroundColor Cyan
+  Write-Host '    2. Sign in with your ' -ForegroundColor DarkGray -NoNewline
+  Write-Host 'personal GitHub' -ForegroundColor White -NoNewline
+  Write-Host ' account' -ForegroundColor DarkGray
+  Write-Host '    3. Click ' -ForegroundColor DarkGray -NoNewline
+  Write-Host '"Join"' -ForegroundColor White -NoNewline
+  Write-Host ' to request membership in the Microsoft org' -ForegroundColor DarkGray
+  Write-Host ''
+
+  $needsJoin = $null
+  while ($needsJoin -ne 'Y' -and $needsJoin -ne 'N') {
+    Write-Host '  Do you need to join the Microsoft org now? ' -ForegroundColor White -NoNewline
+    try { $needsJoin = (Read-Host '(Y/N)').Trim().ToUpper() } catch { $needsJoin = 'N' }
+  }
+
+  if ($needsJoin -eq 'Y') {
+    Start-Process 'https://repos.opensource.microsoft.com/orgs/microsoft'
+    Write-Host ''
+    Write-Host '  Complete the join in your browser, then come back here.' -ForegroundColor DarkGray
+    Write-Host ''
+    Prompt-Continue 'Press Enter when you have joined the Microsoft org...'
+  }
+
   Write-Ok 'Account setup complete.'
 
   # ══════════════════════════════════════════════════════════════════
@@ -393,7 +424,7 @@ function Install-DevSetup {
     Write-Host '  Which toolkit would you like to install?' -ForegroundColor White
     Write-Host ''
 
-    foreach ($num in ($Catalog.Keys | Sort-Object)) {
+    foreach ($num in $Catalog.Keys) {
       $r = $Catalog[$num]
       Write-Host "    $num) " -ForegroundColor White -NoNewline
       Write-Host "$($r.Key)" -ForegroundColor Cyan -NoNewline
@@ -402,13 +433,13 @@ function Install-DevSetup {
     Write-Host ''
 
     $choice = $null
-    while (-not $choice -or -not $Catalog.ContainsKey([int]$choice)) {
+    while (-not $choice -or -not $Catalog.Contains($choice)) {
       Write-Host '  Enter a number (1, 2, or 3): ' -ForegroundColor White -NoNewline
       try {
         $raw = Read-Host
-        if ($raw -match '^\d+$') { $choice = [int]$raw }
+        if ($raw -match '^\d+$') { $choice = $raw.Trim() }
       } catch {}
-      if ($choice -and -not $Catalog.ContainsKey($choice)) {
+      if ($choice -and -not $Catalog.Contains($choice)) {
         Write-Host "  That's not a valid option. Try again." -ForegroundColor Yellow
         $choice = $null
       }
