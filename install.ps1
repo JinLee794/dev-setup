@@ -144,6 +144,15 @@ function Install-DevSetup {
     return $null
   }
 
+  function Test-GitHubAuth {
+    try {
+      $null = & gh auth status --hostname github.com 2>&1
+      return ($LASTEXITCODE -eq 0)
+    } catch {
+      return $false
+    }
+  }
+
   function Test-MicrosoftManagedGitHubAccount($login) {
     return ($login -match '_microsoft$')
   }
@@ -450,11 +459,7 @@ function Install-DevSetup {
   # ══════════════════════════════════════════════════════════════════
   Write-Step 4 'Signing in to GitHub'
 
-  $authOk = $false
-  try {
-    $null = & gh auth status 2>&1
-    if ($LASTEXITCODE -eq 0) { $authOk = $true }
-  } catch {}
+  $authOk = Test-GitHubAuth
 
   if ($authOk) {
     Write-Ok 'Already signed in to GitHub!'
@@ -472,8 +477,20 @@ function Install-DevSetup {
 
     Prompt-Continue 'Press Enter to open the sign-in page...'
 
-    & gh auth login --web --git-protocol https -s read:org,repo,read:packages
-    if ($LASTEXITCODE -ne 0) {
+    & gh auth login --hostname github.com --web --git-protocol https -s read:org,repo,read:packages
+    $authOk = Test-GitHubAuth
+
+    if (-not $authOk) {
+      Write-Host ''
+      Write-Info 'Waiting for GitHub sign-in to finish.'
+      Write-Host '  If another window asks "Authenticate Git with your GitHub credentials?", answer Y.' -ForegroundColor DarkGray
+      Write-Host '  Complete the GitHub browser sign-in, then return here.' -ForegroundColor DarkGray
+      Write-Host ''
+      Prompt-Continue 'Press Enter after GitHub sign-in is complete...'
+      $authOk = Test-GitHubAuth
+    }
+
+    if (-not $authOk) {
       Write-Fail 'Sign-in did not complete.'
       Write-Host ''
       Write-Host '  No worries — just run this setup again and it will' -ForegroundColor DarkGray
