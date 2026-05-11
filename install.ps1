@@ -410,15 +410,16 @@ function Install-DevSetup {
     Write-Ok 'Signed in successfully!'
   }
 
-  # Try to verify Microsoft org membership. This can fail even when the
-  # account is correctly linked, for example if org membership is private
-  # or the current gh token cannot read org membership details.
-  $orgCheck = & gh api user/memberships/orgs/microsoft --jq '.state' 2>$null
-  if ($LASTEXITCODE -ne 0 -or $orgCheck -ne 'active') {
-    Write-Info 'Could not automatically confirm Microsoft org membership.'
-    Write-Host '  That can be normal. We will verify access when downloading the toolkit.' -ForegroundColor DarkGray
+  $ghLogin = $null
+  try { $ghLogin = & gh api user --jq '.login' 2>$null } catch {}
+  if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($ghLogin)) {
+    Write-Ok "Using GitHub account: $ghLogin"
   } else {
-    Write-Ok 'Microsoft org membership confirmed.'
+    Write-Fail 'Could not confirm which GitHub account is signed in.'
+    Write-Host ''
+    Write-Host '  Please sign in again with your personal GitHub account.' -ForegroundColor DarkGray
+    Write-Host '  Then run this setup again.' -ForegroundColor DarkGray
+    return 1
   }
 
   # ══════════════════════════════════════════════════════════════════
@@ -481,6 +482,27 @@ function Install-DevSetup {
   $repoSlug = "$repoOwner/$repoName"
   Write-Host ''
   Write-Ok "You chose: $repoName"
+
+  Write-Info "Checking access to $repoSlug..."
+  $repoAccess = $null
+  try { $repoAccess = & gh repo view $repoSlug --json nameWithOwner --jq '.nameWithOwner' 2>$null } catch {}
+  if ($LASTEXITCODE -ne 0 -or $repoAccess -ne $repoSlug) {
+    Write-Host ''
+    Write-Fail "Could not access $repoSlug with the signed-in GitHub account."
+    Write-Host ''
+    Write-Host '  This usually means one of:' -ForegroundColor Yellow
+    Write-Host '    - Your personal GitHub account is not linked to Microsoft yet' -ForegroundColor Yellow
+    Write-Host '    - You have not joined the Microsoft GitHub organization yet' -ForegroundColor Yellow
+    Write-Host '    - You do not have access to this specific toolkit repo' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '  To fix:' -ForegroundColor DarkGray
+    Write-Host '    1. Go to https://repos.opensource.microsoft.com/link' -ForegroundColor DarkGray
+    Write-Host '    2. Confirm the GitHub account shown there matches the account above' -ForegroundColor DarkGray
+    Write-Host '    3. Join the Microsoft org if prompted' -ForegroundColor DarkGray
+    Write-Host '    4. Run this setup again' -ForegroundColor DarkGray
+    return 1
+  }
+  Write-Ok "Access confirmed for $repoSlug"
 
   # ══════════════════════════════════════════════════════════════════
   # STEP 6: Choose install directory
