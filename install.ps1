@@ -224,6 +224,10 @@ function Install-DevSetup {
 
     $oldCopilotInstall = '      & $codeCmd --install-extension GitHub.copilot-chat --force 2>$null | Out-Null'
     $newCopilotInstall = @'
+      Write-Host "  Copilot Chat may be built into this VS Code install; continuing." -ForegroundColor Gray
+'@
+
+    $oldCmdCopilotInstall = @'
       $copilotInstallOutput = (& cmd.exe /d /c "`"$codeCmd`" --install-extension GitHub.copilot-chat --force" 2>&1 | Out-String)
       if ($LASTEXITCODE -ne 0 -and $copilotInstallOutput -notmatch 'built-in extension|cannot be downgraded|already installed') {
         throw $copilotInstallOutput
@@ -232,6 +236,9 @@ function Install-DevSetup {
 
     if ($text.Contains($oldCopilotInstall)) {
       $text = $text.Replace($oldCopilotInstall, $newCopilotInstall.TrimEnd())
+    }
+    if ($text.Contains($oldCmdCopilotInstall.TrimEnd())) {
+      $text = $text.Replace($oldCmdCopilotInstall.TrimEnd(), $newCopilotInstall.TrimEnd())
     }
 
     $utf8WithBom = New-Object System.Text.UTF8Encoding($true)
