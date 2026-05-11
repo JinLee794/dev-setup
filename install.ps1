@@ -719,7 +719,19 @@ function Install-DevSetup {
 
   Set-ExecutionPolicy -Scope Process Bypass -Force -ErrorAction SilentlyContinue
   Repair-BootstrapScript $bootstrapScript
-  & $bootstrapScript
+
+  $bootstrapArgs = @{}
+  try {
+    $bootstrapCommand = Get-Command $bootstrapScript -ErrorAction Stop
+    if ($bootstrapCommand.Parameters.ContainsKey('SkipClone')) {
+      $bootstrapArgs['SkipClone'] = $true
+    }
+    if ($bootstrapCommand.Parameters.ContainsKey('CloneDir')) {
+      $bootstrapArgs['CloneDir'] = $Dir
+    }
+  } catch {}
+
+  & $bootstrapScript @bootstrapArgs
 
   $rc = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
   if ($rc -ne 0) {
