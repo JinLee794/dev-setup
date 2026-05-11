@@ -627,16 +627,16 @@ function Install-DevSetup {
     return 1
   }
 
-  if (-not (Test-Path $Dir)) {
+  if (-not [System.IO.Directory]::Exists($Dir)) {
     Write-Host ''
-    Write-Fail "GitHub CLI reported success, but the install folder was not created: $Dir"
+    Write-Fail "The install folder was not created: $Dir"
     Write-Host ''
     Write-Host '  Please run setup again and choose a fresh folder.' -ForegroundColor DarkGray
     return 1
   }
 
-  $gitDir = Join-Path $Dir '.git'
-  if (-not (Test-Path $gitDir)) {
+  $insideWorkTree = & git -C $Dir rev-parse --is-inside-work-tree 2>$null
+  if ($LASTEXITCODE -ne 0 -or $insideWorkTree -ne 'true') {
     Write-Host ''
     Write-Fail "The download did not create a valid Git repository at: $Dir"
     Write-Host ''
