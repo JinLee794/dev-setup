@@ -410,27 +410,13 @@ function Install-DevSetup {
     Write-Ok 'Signed in successfully!'
   }
 
-  # Verify Microsoft org membership.
+  # Try to verify Microsoft org membership. This can fail even when the
+  # account is correctly linked, for example if org membership is private
+  # or the current gh token cannot read org membership details.
   $orgCheck = & gh api user/memberships/orgs/microsoft --jq '.state' 2>$null
   if ($LASTEXITCODE -ne 0 -or $orgCheck -ne 'active') {
-    Write-Host ''
-    Write-Warn 'It looks like your account may not be linked to the Microsoft org yet.'
-    Write-Host ''
-    Write-Host '  This is required to access the tools. If you skipped Step 3,' -ForegroundColor DarkGray
-    Write-Host '  go to ' -ForegroundColor DarkGray -NoNewline
-    Write-Host 'https://repos.opensource.microsoft.com/link' -ForegroundColor Cyan -NoNewline
-    Write-Host ' now.' -ForegroundColor DarkGray
-    Write-Host ''
-
-    $continueAnyway = $null
-    while ($continueAnyway -ne 'Y' -and $continueAnyway -ne 'N') {
-      Write-Host '  Try to continue anyway? ' -ForegroundColor White -NoNewline
-      try { $continueAnyway = (Read-Host '(Y/N)').Trim().ToUpper() } catch { $continueAnyway = 'N' }
-    }
-    if ($continueAnyway -ne 'Y') {
-      Write-Info 'No problem. Link your account, then run this setup again.'
-      return 1
-    }
+    Write-Info 'Could not automatically confirm Microsoft org membership.'
+    Write-Host '  That can be normal. We will verify access when downloading the toolkit.' -ForegroundColor DarkGray
   } else {
     Write-Ok 'Microsoft org membership confirmed.'
   }
