@@ -157,6 +157,17 @@ function Install-DevSetup {
     return $candidatePath
   }
 
+  function Ensure-Utf8Bom($filePath) {
+    $bytes = [System.IO.File]::ReadAllBytes($filePath)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+      return
+    }
+
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+    $utf8WithBom = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::WriteAllText($filePath, $text, $utf8WithBom)
+  }
+
   # ── Start ───────────────────────────────────────────────────────
   Write-Banner
 
@@ -637,6 +648,7 @@ function Install-DevSetup {
   }
 
   Set-ExecutionPolicy -Scope Process Bypass -Force -ErrorAction SilentlyContinue
+  Ensure-Utf8Bom $bootstrapScript
   & $bootstrapScript
 
   $rc = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
