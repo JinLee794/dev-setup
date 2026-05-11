@@ -456,11 +456,8 @@ function Install-DevSetup {
   if (-not [string]::IsNullOrWhiteSpace($ghLogin)) {
     Write-Ok "Using GitHub account: $ghLogin"
   } else {
-    Write-Fail 'Could not confirm which GitHub account is signed in.'
-    Write-Host ''
-    Write-Host '  Please sign in again with your personal GitHub account.' -ForegroundColor DarkGray
-    Write-Host '  Then run this setup again.' -ForegroundColor DarkGray
-    return 1
+    Write-Info 'GitHub sign-in is active, but the account name could not be displayed.'
+    Write-Host '  We will verify access when you choose a toolkit.' -ForegroundColor DarkGray
   }
 
   # ══════════════════════════════════════════════════════════════════
