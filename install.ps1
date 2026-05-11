@@ -126,6 +126,37 @@ function Install-DevSetup {
     return ($lower -match 'onedrive|dropbox|google drive|icloud')
   }
 
+  function Normalize-InstallPath($requestedPath, $repoName) {
+    # Normalize drive-relative paths (e.g. c:temp -> c:\temp).
+    if ($requestedPath -match '^[A-Za-z]:[^\\/]') {
+      $requestedPath = $requestedPath.Substring(0, 2) + '\' + $requestedPath.Substring(2)
+    }
+
+    $fullPath = [System.IO.Path]::GetFullPath($requestedPath)
+    $leafName = Split-Path -Leaf $fullPath
+    $escapedRepoName = [regex]::Escape($repoName)
+
+    if ($leafName -ieq $repoName -or $leafName -imatch "^$escapedRepoName-\d+$") {
+      return $fullPath
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path $fullPath $repoName))
+  }
+
+  function Get-NextInstallPath($targetPath) {
+    $parentPath = Split-Path -Parent $targetPath
+    $folderName = Split-Path -Leaf $targetPath
+    $suffix = 1
+
+    do {
+      $candidateName = '{0}-{1:D2}' -f $folderName, $suffix
+      $candidatePath = Join-Path $parentPath $candidateName
+      $suffix++
+    } while (Test-Path $candidatePath)
+
+    return $candidatePath
+  }
+
   # ── Start ───────────────────────────────────────────────────────
   Write-Banner
 
@@ -465,7 +496,8 @@ function Install-DevSetup {
     Write-Host "  We will install to: " -ForegroundColor DarkGray -NoNewline
     Write-Host "$defaultDir" -ForegroundColor White
     Write-Host ''
-    Write-Host '  Press Enter to accept, or type a different folder path.' -ForegroundColor DarkGray
+    Write-Host '  Press Enter to accept, or type a parent folder like C:\git.' -ForegroundColor DarkGray
+    Write-Host "  If you type C:\git, we will use C:\git\$repoName." -ForegroundColor DarkGray
     Write-Host ''
     $requested = $null
     try { $requested = Read-Host '  Install location' } catch {}
@@ -476,11 +508,7 @@ function Install-DevSetup {
     }
   }
 
-  # Normalize drive-relative paths (e.g. c:temp → c:\temp).
-  if ($Dir -match '^[A-Za-z]:[^\\/]') {
-    $Dir = $Dir.Substring(0, 2) + '\' + $Dir.Substring(2)
-  }
-  $Dir = [System.IO.Path]::GetFullPath($Dir)
+  $Dir = Normalize-InstallPath $Dir $repoName
 
   # Block cloud-synced paths.
   if (Test-CloudSyncedPath $Dir) {
@@ -501,15 +529,20 @@ function Install-DevSetup {
   }
 
   if ($dirExists -and -not $dirIsEmpty -and -not $Force) {
-    Write-Warn "That folder already exists and has files in it: $Dir"
+    $alternateDir = Get-NextInstallPath $Dir
+    Write-Warn "That toolkit folder already exists and has files in it: $Dir"
     Write-Host ''
-    $overwrite = $null
-    while ($overwrite -ne 'Y' -and $overwrite -ne 'N') {
-      Write-Host '  Delete it and start fresh? ' -ForegroundColor White -NoNewline
-      try { $overwrite = (Read-Host '(Y/N)').Trim().ToUpper() } catch { $overwrite = 'N' }
+    Write-Host '  We can install into a new folder instead:' -ForegroundColor DarkGray
+    Write-Host "  $alternateDir" -ForegroundColor Cyan
+    Write-Host ''
+
+    $useAlternate = $null
+    while ($useAlternate -ne 'Y' -and $useAlternate -ne 'N') {
+      Write-Host '  Use this new folder? ' -ForegroundColor White -NoNewline
+      try { $useAlternate = (Read-Host '(Y/N)').Trim().ToUpper() } catch { $useAlternate = 'N' }
     }
-    if ($overwrite -eq 'Y') {
-      $Force = [switch]::Present
+    if ($useAlternate -eq 'Y') {
+      $Dir = $alternateDir
     } else {
       Write-Info 'No problem. Run setup again and choose a different folder.'
       return 1
