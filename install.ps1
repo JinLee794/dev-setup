@@ -679,12 +679,36 @@ function Install-DevSetup {
   }
 
   Write-Host '  Downloading... this may take a minute.' -ForegroundColor DarkGray
-  & gh repo clone $repoSlug $Dir -- --branch $Ref --depth 1
-  if ($LASTEXITCODE -ne 0) {
+  $cloneSucceeded = $false
+  for ($attempt = 1; $attempt -le 3 -and -not $cloneSucceeded; $attempt++) {
+    if ($attempt -gt 1) {
+      Write-Warn "Download attempt $attempt of 3..."
+    }
+
+    & gh repo clone $repoSlug $Dir -- --branch $Ref --depth 1
+    $cloneExitCode = $LASTEXITCODE
+    if ($cloneExitCode -eq 0) {
+      $cloneSucceeded = $true
+    } elseif (Test-Path $Dir) {
+      Remove-Item -Path $Dir -Recurse -Force
+    }
+  }
+
+  if (-not $cloneSucceeded) {
+    Write-Warn 'GitHub CLI download did not complete. Trying a direct Git download...'
+    if (Test-Path $Dir) {
+      Remove-Item -Path $Dir -Recurse -Force
+    }
+    & git clone --branch $Ref --depth 1 "https://github.com/$repoSlug.git" $Dir
+    $cloneSucceeded = ($LASTEXITCODE -eq 0)
+  }
+
+  if (-not $cloneSucceeded) {
     Write-Host ''
     Write-Fail "Could not download $repoName."
     Write-Host ''
-    Write-Host '  This usually means one of:' -ForegroundColor Yellow
+    Write-Host '  This can happen if:' -ForegroundColor Yellow
+    Write-Host '    - GitHub is temporarily timing out' -ForegroundColor Yellow
     Write-Host '    - Your GitHub account is not linked to the Microsoft org' -ForegroundColor Yellow
     Write-Host '    - You don''t have access to this specific repo' -ForegroundColor Yellow
     Write-Host ''
