@@ -490,14 +490,11 @@ function Install-DevSetup {
       $authOk = Test-GitHubAuth
     }
 
-    if (-not $authOk) {
-      Write-Fail 'Sign-in did not complete.'
-      Write-Host ''
-      Write-Host '  No worries — just run this setup again and it will' -ForegroundColor DarkGray
-      Write-Host '  pick up where you left off.' -ForegroundColor DarkGray
-      return 1
+    if ($authOk) {
+      Write-Ok 'Signed in successfully!'
+    } else {
+      Write-Info 'Could not confirm sign-in immediately. Continuing to verify GitHub access.'
     }
-    Write-Ok 'Signed in successfully!'
   }
 
   $ghLogin = Get-GitHubLogin
