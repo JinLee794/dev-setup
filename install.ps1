@@ -136,9 +136,16 @@ function Install-DevSetup {
       if ($authStatus -match 'Logged in to github\.com account\s+(\S+)') {
         return $Matches[1].Trim()
       }
+      if ($authStatus -match 'Logged in to github\.com as\s+(\S+)') {
+        return $Matches[1].Trim()
+      }
     } catch {}
 
     return $null
+  }
+
+  function Test-MicrosoftManagedGitHubAccount($login) {
+    return ($login -match '_microsoft$')
   }
 
   function Test-CloudSyncedPath($testPath) {
@@ -454,10 +461,22 @@ function Install-DevSetup {
 
   $ghLogin = Get-GitHubLogin
   if (-not [string]::IsNullOrWhiteSpace($ghLogin)) {
-    Write-Ok "Using GitHub account: $ghLogin"
+    if (Test-MicrosoftManagedGitHubAccount $ghLogin) {
+      Write-Fail "Signed in to GitHub account '$ghLogin', but setup requires your personal GitHub account."
+      Write-Host ''
+      Write-Host '  Please sign out of GitHub CLI and sign in with the personal GitHub account' -ForegroundColor DarkGray
+      Write-Host '  that is linked at https://repos.opensource.microsoft.com/link.' -ForegroundColor DarkGray
+      Write-Host ''
+      Write-Host '  To switch accounts, run:' -ForegroundColor DarkGray
+      Write-Host '    gh auth logout' -ForegroundColor White
+      Write-Host '    gh auth login --web --git-protocol https -s read:org,repo,read:packages' -ForegroundColor White
+      return 1
+    }
+    Write-Ok "Using personal GitHub account: $ghLogin"
   } else {
     Write-Info 'GitHub sign-in is active, but the account name could not be displayed.'
-    Write-Host '  We will verify access when you choose a toolkit.' -ForegroundColor DarkGray
+    Write-Host '  Make sure GitHub CLI is signed in with your personal GitHub account.' -ForegroundColor DarkGray
+    Write-Host '  We will verify access when downloading the toolkit.' -ForegroundColor DarkGray
   }
 
   # ══════════════════════════════════════════════════════════════════
@@ -523,24 +542,12 @@ function Install-DevSetup {
 
   Write-Info "Checking access to $repoSlug..."
   $repoAccess = $null
-  try { $repoAccess = & gh repo view $repoSlug --json nameWithOwner --jq '.nameWithOwner' 2>$null } catch {}
-  if ($LASTEXITCODE -ne 0 -or $repoAccess -ne $repoSlug) {
-    Write-Host ''
-    Write-Fail "Could not access $repoSlug with the signed-in GitHub account."
-    Write-Host ''
-    Write-Host '  This usually means one of:' -ForegroundColor Yellow
-    Write-Host '    - Your personal GitHub account is not linked to Microsoft yet' -ForegroundColor Yellow
-    Write-Host '    - You have not joined the Microsoft GitHub organization yet' -ForegroundColor Yellow
-    Write-Host '    - You do not have access to this specific toolkit repo' -ForegroundColor Yellow
-    Write-Host ''
-    Write-Host '  To fix:' -ForegroundColor DarkGray
-    Write-Host '    1. Go to https://repos.opensource.microsoft.com/link' -ForegroundColor DarkGray
-    Write-Host '    2. Confirm the GitHub account shown there matches the account above' -ForegroundColor DarkGray
-    Write-Host '    3. Join the Microsoft org if prompted' -ForegroundColor DarkGray
-    Write-Host '    4. Run this setup again' -ForegroundColor DarkGray
-    return 1
+  try { $repoAccess = (& gh repo view $repoSlug --json nameWithOwner --jq '.nameWithOwner' 2>$null | Select-Object -First 1) } catch {}
+  if (-not [string]::IsNullOrWhiteSpace($repoAccess) -and $repoAccess.Trim() -eq $repoSlug) {
+    Write-Ok "Access confirmed for $repoSlug"
+  } else {
+    Write-Info 'Could not pre-confirm repo access. The download step will verify it.'
   }
-  Write-Ok "Access confirmed for $repoSlug"
 
   # ══════════════════════════════════════════════════════════════════
   # STEP 6: Choose install directory
