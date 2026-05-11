@@ -121,9 +121,140 @@ function Install-DevSetup {
     return ($proc.ExitCode -eq 0)
   }
 
+  function Get-GitHubLogin {
+    $login = $null
+
+    try {
+      $login = (& gh api user --jq '.login' 2>$null | Select-Object -First 1)
+      if (-not [string]::IsNullOrWhiteSpace($login)) {
+        return $login.Trim()
+      }
+    } catch {}
+
+    try {
+      $authStatus = (& gh auth status --hostname github.com 2>&1 | Out-String)
+      if ($authStatus -match 'Logged in to github\.com account\s+(\S+)') {
+        return $Matches[1].Trim()
+      }
+      if ($authStatus -match 'Logged in to github\.com as\s+(\S+)') {
+        return $Matches[1].Trim()
+      }
+    } catch {}
+
+    return $null
+  }
+
+  function Test-GitHubAuth {
+    try {
+      $null = & gh auth status --hostname github.com 2>&1
+      return ($LASTEXITCODE -eq 0)
+    } catch {
+      return $false
+    }
+  }
+
+  function Test-MicrosoftManagedGitHubAccount($login) {
+    return ($login -match '_microsoft$')
+  }
+
   function Test-CloudSyncedPath($testPath) {
     $lower = $testPath.ToLower()
     return ($lower -match 'onedrive|dropbox|google drive|icloud')
+  }
+
+  function Normalize-InstallPath($requestedPath, $repoName) {
+    # Normalize drive-relative paths (e.g. c:temp -> c:\temp).
+    if ($requestedPath -match '^[A-Za-z]:[^\\/]') {
+      $requestedPath = $requestedPath.Substring(0, 2) + '\' + $requestedPath.Substring(2)
+    }
+
+    $fullPath = [System.IO.Path]::GetFullPath($requestedPath)
+    $leafName = Split-Path -Leaf $fullPath
+    $escapedRepoName = [regex]::Escape($repoName)
+
+    if ($leafName -ieq $repoName -or $leafName -imatch "^$escapedRepoName-\d+$") {
+      return $fullPath
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path $fullPath $repoName))
+  }
+
+  function Get-NextInstallPath($targetPath) {
+    $parentPath = Split-Path -Parent $targetPath
+    $folderName = Split-Path -Leaf $targetPath
+    $suffix = 1
+
+    do {
+      $candidateName = '{0}-{1:D2}' -f $folderName, $suffix
+      $candidatePath = Join-Path $parentPath $candidateName
+      $suffix++
+    } while (Test-Path $candidatePath)
+
+    return $candidatePath
+  }
+
+  function Ensure-Utf8Bom($filePath) {
+    $bytes = [System.IO.File]::ReadAllBytes($filePath)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+      return
+    }
+
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+    $utf8WithBom = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::WriteAllText($filePath, $text, $utf8WithBom)
+  }
+
+  function Repair-BootstrapScript($filePath) {
+    $bytes = [System.IO.File]::ReadAllBytes($filePath)
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+
+    $oldAzVersionCheck = '  $azVer = (az version --query ''"azure-cli"'' -o tsv 2>$null)'
+    $newAzVersionCheck = @'
+  try {
+    $azVersionInfo = az version -o json 2>$null | ConvertFrom-Json
+    $azVer = $azVersionInfo.'azure-cli'
+  } catch {
+    $azVer = $null
+  }
+'@
+
+    if ($text.Contains($oldAzVersionCheck)) {
+      $text = $text.Replace($oldAzVersionCheck, $newAzVersionCheck.TrimEnd())
+    }
+
+    $oldCopilotInstall = '      & $codeCmd --install-extension GitHub.copilot-chat --force 2>$null | Out-Null'
+    $newCopilotInstall = @'
+      Write-Host "  Copilot Chat may be built into this VS Code install; continuing." -ForegroundColor Gray
+'@
+
+    $oldCmdCopilotInstall = @'
+      $copilotInstallOutput = (& cmd.exe /d /c "`"$codeCmd`" --install-extension GitHub.copilot-chat --force" 2>&1 | Out-String)
+      if ($LASTEXITCODE -ne 0 -and $copilotInstallOutput -notmatch 'built-in extension|cannot be downgraded|already installed') {
+        throw $copilotInstallOutput
+      }
+'@
+
+    if ($text.Contains($oldCopilotInstall)) {
+      $text = $text.Replace($oldCopilotInstall, $newCopilotInstall.TrimEnd())
+    }
+    if ($text.Contains($oldCmdCopilotInstall.TrimEnd())) {
+      $text = $text.Replace($oldCmdCopilotInstall.TrimEnd(), $newCopilotInstall.TrimEnd())
+    }
+
+    $utf8WithBom = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::WriteAllText($filePath, $text, $utf8WithBom)
+  }
+
+  function Get-ScriptParameterNames($filePath) {
+    try {
+      $tokens = $null
+      $errors = $null
+      $ast = [System.Management.Automation.Language.Parser]::ParseFile($filePath, [ref]$tokens, [ref]$errors)
+      if ($errors.Count -gt 0 -or -not $ast.ParamBlock) { return @() }
+      return @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+    } catch {
+      return @()
+    }
   }
 
   # ── Start ───────────────────────────────────────────────────────
@@ -335,11 +466,7 @@ function Install-DevSetup {
   # ══════════════════════════════════════════════════════════════════
   Write-Step 4 'Signing in to GitHub'
 
-  $authOk = $false
-  try {
-    $null = & gh auth status 2>&1
-    if ($LASTEXITCODE -eq 0) { $authOk = $true }
-  } catch {}
+  $authOk = Test-GitHubAuth
 
   if ($authOk) {
     Write-Ok 'Already signed in to GitHub!'
@@ -357,40 +484,44 @@ function Install-DevSetup {
 
     Prompt-Continue 'Press Enter to open the sign-in page...'
 
-    & gh auth login --web --git-protocol https -s read:org,repo,read:packages
-    if ($LASTEXITCODE -ne 0) {
-      Write-Fail 'Sign-in did not complete.'
+    & gh auth login --hostname github.com --web --git-protocol https -s read:org,repo,read:packages
+    $authOk = Test-GitHubAuth
+
+    if (-not $authOk) {
       Write-Host ''
-      Write-Host '  No worries — just run this setup again and it will' -ForegroundColor DarkGray
-      Write-Host '  pick up where you left off.' -ForegroundColor DarkGray
-      return 1
+      Write-Info 'Waiting for GitHub sign-in to finish.'
+      Write-Host '  If another window asks "Authenticate Git with your GitHub credentials?", answer Y.' -ForegroundColor DarkGray
+      Write-Host '  Complete the GitHub browser sign-in, then return here.' -ForegroundColor DarkGray
+      Write-Host ''
+      Prompt-Continue 'Press Enter after GitHub sign-in is complete...'
+      $authOk = Test-GitHubAuth
     }
-    Write-Ok 'Signed in successfully!'
+
+    if ($authOk) {
+      Write-Ok 'Signed in successfully!'
+    } else {
+      Write-Info 'Could not confirm sign-in immediately. Continuing to verify GitHub access.'
+    }
   }
 
-  # Verify Microsoft org membership.
-  $orgCheck = & gh api user/memberships/orgs/microsoft --jq '.state' 2>$null
-  if ($LASTEXITCODE -ne 0 -or $orgCheck -ne 'active') {
-    Write-Host ''
-    Write-Warn 'It looks like your account may not be linked to the Microsoft org yet.'
-    Write-Host ''
-    Write-Host '  This is required to access the tools. If you skipped Step 3,' -ForegroundColor DarkGray
-    Write-Host '  go to ' -ForegroundColor DarkGray -NoNewline
-    Write-Host 'https://repos.opensource.microsoft.com/link' -ForegroundColor Cyan -NoNewline
-    Write-Host ' now.' -ForegroundColor DarkGray
-    Write-Host ''
-
-    $continueAnyway = $null
-    while ($continueAnyway -ne 'Y' -and $continueAnyway -ne 'N') {
-      Write-Host '  Try to continue anyway? ' -ForegroundColor White -NoNewline
-      try { $continueAnyway = (Read-Host '(Y/N)').Trim().ToUpper() } catch { $continueAnyway = 'N' }
-    }
-    if ($continueAnyway -ne 'Y') {
-      Write-Info 'No problem. Link your account, then run this setup again.'
+  $ghLogin = Get-GitHubLogin
+  if (-not [string]::IsNullOrWhiteSpace($ghLogin)) {
+    if (Test-MicrosoftManagedGitHubAccount $ghLogin) {
+      Write-Fail "Signed in to GitHub account '$ghLogin', but setup requires your personal GitHub account."
+      Write-Host ''
+      Write-Host '  Please sign out of GitHub CLI and sign in with the personal GitHub account' -ForegroundColor DarkGray
+      Write-Host '  that is linked at https://repos.opensource.microsoft.com/link.' -ForegroundColor DarkGray
+      Write-Host ''
+      Write-Host '  To switch accounts, run:' -ForegroundColor DarkGray
+      Write-Host '    gh auth logout' -ForegroundColor White
+      Write-Host '    gh auth login --web --git-protocol https -s read:org,repo,read:packages' -ForegroundColor White
       return 1
     }
+    Write-Ok "Using personal GitHub account: $ghLogin"
   } else {
-    Write-Ok 'Microsoft org membership confirmed.'
+    Write-Info 'GitHub sign-in is active, but the account name could not be displayed.'
+    Write-Host '  Make sure GitHub CLI is signed in with your personal GitHub account.' -ForegroundColor DarkGray
+    Write-Host '  We will verify access when downloading the toolkit.' -ForegroundColor DarkGray
   }
 
   # ══════════════════════════════════════════════════════════════════
@@ -454,6 +585,15 @@ function Install-DevSetup {
   Write-Host ''
   Write-Ok "You chose: $repoName"
 
+  Write-Info "Checking access to $repoSlug..."
+  $repoAccess = $null
+  try { $repoAccess = (& gh repo view $repoSlug --json nameWithOwner --jq '.nameWithOwner' 2>$null | Select-Object -First 1) } catch {}
+  if (-not [string]::IsNullOrWhiteSpace($repoAccess) -and $repoAccess.Trim() -eq $repoSlug) {
+    Write-Ok "Access confirmed for $repoSlug"
+  } else {
+    Write-Info 'Could not pre-confirm repo access. The download step will verify it.'
+  }
+
   # ══════════════════════════════════════════════════════════════════
   # STEP 6: Choose install directory
   # ══════════════════════════════════════════════════════════════════
@@ -465,7 +605,8 @@ function Install-DevSetup {
     Write-Host "  We will install to: " -ForegroundColor DarkGray -NoNewline
     Write-Host "$defaultDir" -ForegroundColor White
     Write-Host ''
-    Write-Host '  Press Enter to accept, or type a different folder path.' -ForegroundColor DarkGray
+    Write-Host '  Press Enter to accept, or type a parent folder like C:\git.' -ForegroundColor DarkGray
+    Write-Host "  If you type C:\git, we will use C:\git\$repoName." -ForegroundColor DarkGray
     Write-Host ''
     $requested = $null
     try { $requested = Read-Host '  Install location' } catch {}
@@ -476,11 +617,7 @@ function Install-DevSetup {
     }
   }
 
-  # Normalize drive-relative paths (e.g. c:temp → c:\temp).
-  if ($Dir -match '^[A-Za-z]:[^\\/]') {
-    $Dir = $Dir.Substring(0, 2) + '\' + $Dir.Substring(2)
-  }
-  $Dir = [System.IO.Path]::GetFullPath($Dir)
+  $Dir = Normalize-InstallPath $Dir $repoName
 
   # Block cloud-synced paths.
   if (Test-CloudSyncedPath $Dir) {
@@ -501,15 +638,20 @@ function Install-DevSetup {
   }
 
   if ($dirExists -and -not $dirIsEmpty -and -not $Force) {
-    Write-Warn "That folder already exists and has files in it: $Dir"
+    $alternateDir = Get-NextInstallPath $Dir
+    Write-Warn "That toolkit folder already exists and has files in it: $Dir"
     Write-Host ''
-    $overwrite = $null
-    while ($overwrite -ne 'Y' -and $overwrite -ne 'N') {
-      Write-Host '  Delete it and start fresh? ' -ForegroundColor White -NoNewline
-      try { $overwrite = (Read-Host '(Y/N)').Trim().ToUpper() } catch { $overwrite = 'N' }
+    Write-Host '  We can install into a new folder instead:' -ForegroundColor DarkGray
+    Write-Host "  $alternateDir" -ForegroundColor Cyan
+    Write-Host ''
+
+    $useAlternate = $null
+    while ($useAlternate -ne 'Y' -and $useAlternate -ne 'N') {
+      Write-Host '  Use this new folder? ' -ForegroundColor White -NoNewline
+      try { $useAlternate = (Read-Host '(Y/N)').Trim().ToUpper() } catch { $useAlternate = 'N' }
     }
-    if ($overwrite -eq 'Y') {
-      $Force = [switch]::Present
+    if ($useAlternate -eq 'Y') {
+      $Dir = $alternateDir
     } else {
       Write-Info 'No problem. Run setup again and choose a different folder.'
       return 1
@@ -537,12 +679,36 @@ function Install-DevSetup {
   }
 
   Write-Host '  Downloading... this may take a minute.' -ForegroundColor DarkGray
-  & gh repo clone $repoSlug $Dir -- --branch $Ref --depth 1
-  if ($LASTEXITCODE -ne 0) {
+  $cloneSucceeded = $false
+  for ($attempt = 1; $attempt -le 3 -and -not $cloneSucceeded; $attempt++) {
+    if ($attempt -gt 1) {
+      Write-Warn "Download attempt $attempt of 3..."
+    }
+
+    & gh repo clone $repoSlug $Dir -- --branch $Ref --depth 1
+    $cloneExitCode = $LASTEXITCODE
+    if ($cloneExitCode -eq 0) {
+      $cloneSucceeded = $true
+    } elseif (Test-Path $Dir) {
+      Remove-Item -Path $Dir -Recurse -Force
+    }
+  }
+
+  if (-not $cloneSucceeded) {
+    Write-Warn 'GitHub CLI download did not complete. Trying a direct Git download...'
+    if (Test-Path $Dir) {
+      Remove-Item -Path $Dir -Recurse -Force
+    }
+    & git clone --branch $Ref --depth 1 "https://github.com/$repoSlug.git" $Dir
+    $cloneSucceeded = ($LASTEXITCODE -eq 0)
+  }
+
+  if (-not $cloneSucceeded) {
     Write-Host ''
     Write-Fail "Could not download $repoName."
     Write-Host ''
-    Write-Host '  This usually means one of:' -ForegroundColor Yellow
+    Write-Host '  This can happen if:' -ForegroundColor Yellow
+    Write-Host '    - GitHub is temporarily timing out' -ForegroundColor Yellow
     Write-Host '    - Your GitHub account is not linked to the Microsoft org' -ForegroundColor Yellow
     Write-Host '    - You don''t have access to this specific repo' -ForegroundColor Yellow
     Write-Host ''
@@ -550,6 +716,23 @@ function Install-DevSetup {
     Write-Host '    1. Go to https://repos.opensource.microsoft.com/link' -ForegroundColor DarkGray
     Write-Host '    2. Make sure your account is linked' -ForegroundColor DarkGray
     Write-Host '    3. Run this setup again' -ForegroundColor DarkGray
+    return 1
+  }
+
+  if (-not [System.IO.Directory]::Exists($Dir)) {
+    Write-Host ''
+    Write-Fail "The install folder was not created: $Dir"
+    Write-Host ''
+    Write-Host '  Please run setup again and choose a fresh folder.' -ForegroundColor DarkGray
+    return 1
+  }
+
+  $insideWorkTree = & git -C $Dir rev-parse --is-inside-work-tree 2>$null
+  if ($LASTEXITCODE -ne 0 -or $insideWorkTree -ne 'true') {
+    Write-Host ''
+    Write-Fail "The download did not create a valid Git repository at: $Dir"
+    Write-Host ''
+    Write-Host '  Please run setup again and choose a fresh folder.' -ForegroundColor DarkGray
     return 1
   }
 
@@ -604,7 +787,18 @@ function Install-DevSetup {
   }
 
   Set-ExecutionPolicy -Scope Process Bypass -Force -ErrorAction SilentlyContinue
-  & $bootstrapScript
+  Repair-BootstrapScript $bootstrapScript
+
+  $bootstrapArgs = @{}
+  $bootstrapParamNames = @(Get-ScriptParameterNames $bootstrapScript)
+  if ($bootstrapParamNames -contains 'SkipClone') {
+    $bootstrapArgs['SkipClone'] = $true
+  }
+  if ($bootstrapParamNames -contains 'CloneDir') {
+    $bootstrapArgs['CloneDir'] = $Dir
+  }
+
+  & $bootstrapScript @bootstrapArgs
 
   $rc = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
   if ($rc -ne 0) {
