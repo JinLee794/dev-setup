@@ -217,6 +217,18 @@ function Install-DevSetup {
     [System.IO.File]::WriteAllText($filePath, $text, $utf8WithBom)
   }
 
+  function Get-ScriptParameterNames($filePath) {
+    try {
+      $tokens = $null
+      $errors = $null
+      $ast = [System.Management.Automation.Language.Parser]::ParseFile($filePath, [ref]$tokens, [ref]$errors)
+      if ($errors.Count -gt 0 -or -not $ast.ParamBlock) { return @() }
+      return @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+    } catch {
+      return @()
+    }
+  }
+
   # ── Start ───────────────────────────────────────────────────────
   Write-Banner
 
@@ -721,15 +733,13 @@ function Install-DevSetup {
   Repair-BootstrapScript $bootstrapScript
 
   $bootstrapArgs = @{}
-  try {
-    $bootstrapCommand = Get-Command $bootstrapScript -ErrorAction Stop
-    if ($bootstrapCommand.Parameters.ContainsKey('SkipClone')) {
-      $bootstrapArgs['SkipClone'] = $true
-    }
-    if ($bootstrapCommand.Parameters.ContainsKey('CloneDir')) {
-      $bootstrapArgs['CloneDir'] = $Dir
-    }
-  } catch {}
+  $bootstrapParamNames = @(Get-ScriptParameterNames $bootstrapScript)
+  if ($bootstrapParamNames -contains 'SkipClone') {
+    $bootstrapArgs['SkipClone'] = $true
+  }
+  if ($bootstrapParamNames -contains 'CloneDir') {
+    $bootstrapArgs['CloneDir'] = $Dir
+  }
 
   & $bootstrapScript @bootstrapArgs
 
