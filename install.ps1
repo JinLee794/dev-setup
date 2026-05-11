@@ -121,6 +121,26 @@ function Install-DevSetup {
     return ($proc.ExitCode -eq 0)
   }
 
+  function Get-GitHubLogin {
+    $login = $null
+
+    try {
+      $login = (& gh api user --jq '.login' 2>$null | Select-Object -First 1)
+      if (-not [string]::IsNullOrWhiteSpace($login)) {
+        return $login.Trim()
+      }
+    } catch {}
+
+    try {
+      $authStatus = (& gh auth status --hostname github.com 2>&1 | Out-String)
+      if ($authStatus -match 'Logged in to github\.com account\s+(\S+)') {
+        return $Matches[1].Trim()
+      }
+    } catch {}
+
+    return $null
+  }
+
   function Test-CloudSyncedPath($testPath) {
     $lower = $testPath.ToLower()
     return ($lower -match 'onedrive|dropbox|google drive|icloud')
@@ -432,9 +452,8 @@ function Install-DevSetup {
     Write-Ok 'Signed in successfully!'
   }
 
-  $ghLogin = $null
-  try { $ghLogin = & gh api user --jq '.login' 2>$null } catch {}
-  if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($ghLogin)) {
+  $ghLogin = Get-GitHubLogin
+  if (-not [string]::IsNullOrWhiteSpace($ghLogin)) {
     Write-Ok "Using GitHub account: $ghLogin"
   } else {
     Write-Fail 'Could not confirm which GitHub account is signed in.'
