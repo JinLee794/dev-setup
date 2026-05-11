@@ -213,6 +213,18 @@ function Install-DevSetup {
       $text = $text.Replace($oldAzVersionCheck, $newAzVersionCheck.TrimEnd())
     }
 
+    $oldCopilotInstall = '      & $codeCmd --install-extension GitHub.copilot-chat --force 2>$null | Out-Null'
+    $newCopilotInstall = @'
+      $copilotInstallOutput = (& cmd.exe /d /c "`"$codeCmd`" --install-extension GitHub.copilot-chat --force" 2>&1 | Out-String)
+      if ($LASTEXITCODE -ne 0 -and $copilotInstallOutput -notmatch 'built-in extension|cannot be downgraded|already installed') {
+        throw $copilotInstallOutput
+      }
+'@
+
+    if ($text.Contains($oldCopilotInstall)) {
+      $text = $text.Replace($oldCopilotInstall, $newCopilotInstall.TrimEnd())
+    }
+
     $utf8WithBom = New-Object System.Text.UTF8Encoding($true)
     [System.IO.File]::WriteAllText($filePath, $text, $utf8WithBom)
   }
