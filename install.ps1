@@ -168,6 +168,28 @@ function Install-DevSetup {
     [System.IO.File]::WriteAllText($filePath, $text, $utf8WithBom)
   }
 
+  function Repair-BootstrapScript($filePath) {
+    $bytes = [System.IO.File]::ReadAllBytes($filePath)
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+
+    $oldAzVersionCheck = '  $azVer = (az version --query ''"azure-cli"'' -o tsv 2>$null)'
+    $newAzVersionCheck = @'
+  try {
+    $azVersionInfo = az version -o json 2>$null | ConvertFrom-Json
+    $azVer = $azVersionInfo.'azure-cli'
+  } catch {
+    $azVer = $null
+  }
+'@
+
+    if ($text.Contains($oldAzVersionCheck)) {
+      $text = $text.Replace($oldAzVersionCheck, $newAzVersionCheck.TrimEnd())
+    }
+
+    $utf8WithBom = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::WriteAllText($filePath, $text, $utf8WithBom)
+  }
+
   # ── Start ───────────────────────────────────────────────────────
   Write-Banner
 
@@ -605,6 +627,23 @@ function Install-DevSetup {
     return 1
   }
 
+  if (-not (Test-Path $Dir)) {
+    Write-Host ''
+    Write-Fail "GitHub CLI reported success, but the install folder was not created: $Dir"
+    Write-Host ''
+    Write-Host '  Please run setup again and choose a fresh folder.' -ForegroundColor DarkGray
+    return 1
+  }
+
+  $gitDir = Join-Path $Dir '.git'
+  if (-not (Test-Path $gitDir)) {
+    Write-Host ''
+    Write-Fail "The download did not create a valid Git repository at: $Dir"
+    Write-Host ''
+    Write-Host '  Please run setup again and choose a fresh folder.' -ForegroundColor DarkGray
+    return 1
+  }
+
   Write-Ok "Downloaded $repoName!"
 
   # ── Discover and run the repo's bootstrap script ────────────────
@@ -656,7 +695,7 @@ function Install-DevSetup {
   }
 
   Set-ExecutionPolicy -Scope Process Bypass -Force -ErrorAction SilentlyContinue
-  Ensure-Utf8Bom $bootstrapScript
+  Repair-BootstrapScript $bootstrapScript
   & $bootstrapScript
 
   $rc = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
